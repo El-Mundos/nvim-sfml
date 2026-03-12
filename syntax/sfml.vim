@@ -89,4 +89,7 @@ highlight default link sfmlSide          Constant
 highlight default link sfmlPunct         Delimiter
 highlight default link sfmlWildcard      Special
 
+syntax match sfmlLineComment "--.*$" contains=NONE display
+highlight default link sfmlLineComment Comment
+
 let b:current_syntax = "sfml"
