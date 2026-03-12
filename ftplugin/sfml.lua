@@ -20,8 +20,7 @@ vim.bo.softtabstop = 4
 vim.bo.commentstring = "-- %s"
 
 -- Folding
-vim.opt_local.foldmethod = "expr"
-vim.opt_local.foldexpr = "v:lua.require('sfml.fold').foldexpr(v:lnum)"
+vim.opt_local.foldmethod = "indent"
 vim.opt_local.foldlevel = 99
 
 -- Omnifunc for completion
