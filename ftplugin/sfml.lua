@@ -5,6 +5,9 @@ if vim.b.did_ftplugin_sfml then
 end
 vim.b.did_ftplugin_sfml = true
 
+-- No treesitter grammar for SFML exists; stop it so syntax/sfml.vim works
+pcall(vim.treesitter.stop)
+
 local buf = vim.api.nvim_get_current_buf()
 
 -- Indentation
