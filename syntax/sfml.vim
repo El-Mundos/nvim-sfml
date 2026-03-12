@@ -6,20 +6,19 @@ if exists("b:current_syntax")
   finish
 endif
 
-" Case insensitive matching - the grammar uses case-insensitive lexer rules
+" Case insensitive matching
 syntax case ignore
 
-" ─── Comments ────────────────────────────────────────────────────────────────
-syntax match sfmlComment "--.*$" contains=sfmlTodo
-syntax keyword sfmlTodo TODO FIXME NOTE HACK contained
+" ─── Comments (defined FIRST so region takes priority) ───────────────────────
+" 'extend' makes the region win over any keyword/match that would overlap it.
+syntax region sfmlComment start="--" end="$" keepend extend
+syntax keyword sfmlTodo TODO FIXME NOTE HACK contained containedin=sfmlComment
 
 " ─── Strings ─────────────────────────────────────────────────────────────────
 syntax region sfmlString start='"' end='"' skip='\\"' oneline
 
 " ─── Numbers ─────────────────────────────────────────────────────────────────
-" NUMBER_WITH_G_SUFFIX (global alignment): 20g, 100G
 syntax match sfmlNumberG '\<[0-9]\+[gG]\>'
-" Plain numbers
 syntax match sfmlNumber  '\<[0-9]\+\>'
 
 " ─── Program-level keywords ──────────────────────────────────────────────────
@@ -37,10 +36,9 @@ syntax keyword sfmlIO EMPTY SLOTS SLOT IN WHERE
 
 " ─── Resource type prefixes ──────────────────────────────────────────────────
 syntax match sfmlResourceType '\<\(item\|fluid\|forge_energy\|fe\|rf\|energy\|power\|chemical\|gas\|infusion\|mekanism_energy\|redstone\)\s*::'
-" Full resource identifier: namespace:name or type::ns:name
-syntax match sfmlResourceId '\<[a-zA-Z_*][a-zA-Z0-9_*]*\(\s*:\s*[a-zA-Z_*][a-zA-Z0-9_*]*\)\{1,3\}'
+syntax match sfmlResourceId   '\<[a-zA-Z_*][a-zA-Z0-9_*]*\(\s*:\s*[a-zA-Z_*][a-zA-Z0-9_*]*\)\{1,3\}'
 
-" ─── WITH / WITHOUT / TAG clause ─────────────────────────────────────────────
+" ─── WITH / WITHOUT / TAG ────────────────────────────────────────────────────
 syntax keyword sfmlWith WITH WITHOUT TAG
 syntax match   sfmlHashtag '#'
 
@@ -62,7 +60,7 @@ syntax keyword sfmlRoundRobin ROUND ROBIN BY LABEL BLOCK
 syntax keyword sfmlSide TOP BOTTOM NORTH EAST SOUTH WEST LEFT RIGHT FRONT BACK NULL SIDE
 
 " ─── Punctuation ─────────────────────────────────────────────────────────────
-syntax match sfmlPunct '[,:/\-()]'
+syntax match sfmlPunct    '[,:/\-()]'
 syntax match sfmlWildcard '\*'
 
 " ─── Highlight links ─────────────────────────────────────────────────────────
