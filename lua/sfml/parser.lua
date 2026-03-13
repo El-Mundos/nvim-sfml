@@ -1286,11 +1286,12 @@ function M.parse(source)
 				-- ── End boolexpr ─────────────────────────────────────────────────
 
 				local if_block = parse_block_contents(depth + 1)
+				local base_idx = #stmts
 				for _, s in ipairs(if_block.statements) do
 					table.insert(stmts, s)
 				end
 				for _, f in ipairs(if_block.forget_points) do
-					table.insert(forget_points, f)
+					table.insert(forget_points, { labels = f.labels, stmt_index = base_idx + f.stmt_index })
 				end
 
 				skip_comments()
@@ -1319,12 +1320,13 @@ function M.parse(source)
 							end
 						end
 					end
+					local else_base_idx = #stmts
 					local else_block = parse_block_contents(depth + 1)
 					for _, s in ipairs(else_block.statements) do
 						table.insert(stmts, s)
 					end
 					for _, f in ipairs(else_block.forget_points) do
-						table.insert(forget_points, f)
+						table.insert(forget_points, { labels = f.labels, stmt_index = else_base_idx + f.stmt_index })
 					end
 					skip_comments()
 				end
