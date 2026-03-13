@@ -156,7 +156,24 @@ local function lint(source)
 			end
 		end
 
-		-- 3. Incomplete IO flow analysis (IncompleteIOProgramLinter)
+		-- 3. Forget suggestion analysis
+		-- Track per label: which resource types were INPUT'd.
+		-- At end of trigger, any label INPUT'd but never FORGET'd may buffer items.
+		-- Energy types never need forgetting. Bare FORGET clears all.
+
+		local ENERGY_TYPES = {
+			forge_energy = true,
+			fe = true,
+			rf = true,
+			energy = true,
+			power = true,
+			mekanism_energy = true,
+		}
+
+		local inputted_labels = {} -- [label] = { line=N, types={typename=true} }
+		local forgotten_labels = {}
+		local bare_forget = false
+
 		local events = {}
 		for i, stmt in ipairs(trigger.statements) do
 			table.insert(events, { kind = "stmt", stmt = stmt, idx = i })
@@ -170,106 +187,80 @@ local function lint(source)
 			return ai < bi
 		end)
 
-		local function get_type_names(stmt)
-			local types = {}
-			if #stmt.resource_ids == 0 then
-				types["item"] = true
-			else
-				for _, rid in ipairs(stmt.resource_ids) do
-					types[rid.type_name] = true
-				end
-			end
-			return types
-		end
-
-		local inputted_types = {}
-		local outputted_types = {}
-
 		for _, ev in ipairs(events) do
 			if ev.kind == "stmt" then
 				local stmt = ev.stmt
-				local type_names = get_type_names(stmt)
-
-				if stmt.kind == "input" then
-					for tn, _ in pairs(type_names) do
-						if not inputted_types[tn] then
-							inputted_types[tn] = {}
-						end
-						for _, lbl in ipairs(stmt.labels) do
-							inputted_types[tn][lbl] = true
-						end
-					end
-				elseif stmt.kind == "output" then
-					for tn, _ in pairs(type_names) do
-						if not inputted_types[tn] then
-							table.insert(diags, {
-								msg = ("OUTPUT uses resource type '%s' but no preceding INPUT provides it"):format(tn),
-								line = stmt.line,
-								col = stmt.col or 0,
-								severity = "warning",
-							})
-						end
-						outputted_types[tn] = true
+				local types = {}
+				if #stmt.resource_ids == 0 then
+					types["item"] = true
+				else
+					for _, rid in ipairs(stmt.resource_ids) do
+						types[rid.type_name] = true
 					end
 				end
-			elseif ev.kind == "forget" then
-				if #ev.labels == 0 then
-					for tn, labels in pairs(inputted_types) do
-						if not outputted_types[tn] then
-							for lbl, _ in pairs(labels) do
+				local non_energy = false
+				for tn, _ in pairs(types) do
+					if not ENERGY_TYPES[tn] then
+						non_energy = true
+					end
+				end
+
+				if stmt.kind == "input" and non_energy then
+					for _, lbl in ipairs(stmt.labels) do
+						if not inputted_labels[lbl] then
+							inputted_labels[lbl] = { line = stmt.line, types = {} }
+						end
+						for tn, _ in pairs(types) do
+							if not ENERGY_TYPES[tn] then
+								inputted_labels[lbl].types[tn] = true
+							end
+						end
+					end
+				elseif stmt.kind == "output" and non_energy then
+					for tn, _ in pairs(types) do
+						if not ENERGY_TYPES[tn] then
+							local found = false
+							for _, info in pairs(inputted_labels) do
+								if info.types[tn] then
+									found = true
+									break
+								end
+							end
+							if not found then
 								table.insert(diags, {
-									msg = ("INPUT from '%s' with type '%s' is forgotten but never OUTPUT'd"):format(
-										lbl,
-										tn
-									),
-									line = trigger.line,
-									col = 0,
+									msg = ("OUTPUT uses type '%s' but no preceding INPUT provides it"):format(tn),
+									line = stmt.line,
+									col = stmt.col or 0,
 									severity = "warning",
 								})
 							end
 						end
 					end
-					inputted_types = {}
-					outputted_types = {}
+				end
+			elseif ev.kind == "forget" then
+				if #ev.labels == 0 then
+					bare_forget = true
+					inputted_labels = {}
+					forgotten_labels = {}
 				else
-					local forget_set = {}
 					for _, lbl in ipairs(ev.labels) do
-						forget_set[lbl] = true
-					end
-					for tn, labels in pairs(inputted_types) do
-						for lbl, _ in pairs(labels) do
-							if forget_set[lbl] then
-								if not outputted_types[tn] then
-									table.insert(diags, {
-										msg = ("INPUT from '%s' with type '%s' is forgotten but never OUTPUT'd"):format(
-											lbl,
-											tn
-										),
-										line = trigger.line,
-										col = 0,
-										severity = "warning",
-									})
-								end
-								labels[lbl] = nil
-							end
-						end
-						if next(labels) == nil then
-							inputted_types[tn] = nil
-						end
+						forgotten_labels[lbl] = true
+						inputted_labels[lbl] = nil
 					end
 				end
 			end
 		end
 
-		-- End-of-trigger: un-outputted inputs
-		for tn, labels in pairs(inputted_types) do
-			if not outputted_types[tn] then
-				for lbl, _ in pairs(labels) do
+		if not bare_forget then
+			for lbl, info in pairs(inputted_labels) do
+				if not forgotten_labels[lbl] then
 					table.insert(diags, {
-						msg = ("INPUT from '%s' with type '%s' is never OUTPUT'd in this trigger"):format(lbl, tn),
-						line = trigger.line,
+						msg = ("Label '%s' was INPUT'd but never FORGET'd — add FORGET to clear the cable buffer"):format(
+							lbl
+						),
+						line = info.line,
 						col = 0,
-						severity = "warning",
+						severity = "hint",
 					})
 				end
 			end
@@ -278,6 +269,8 @@ local function lint(source)
 
 	return diags
 end
+
+M.lint = lint
 
 -- ─── Public API ───────────────────────────────────────────────────────────────
 
