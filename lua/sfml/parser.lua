@@ -1128,10 +1128,17 @@ function M.parse(source)
 
 					-- optional number
 					if cur() and (cur().type == M.TT.NUMBER or cur().type == M.TT.NUMBER_G) then
-						-- check: if number is 0 without a cmp op, that's the bug from line 30
-						local num_val = tonumber((cur().value:gsub("[gG]$", "")))
-						if num_val == 0 and not has_cmp then
-							add_error("HAS 0 requires a comparison operator (e.g. HAS = 0 or HAS <= 0)", cur(), "error")
+						if not has_cmp then
+							add_error(
+								("HAS %s requires a comparison operator (e.g. HAS = %s, HAS < %s, HAS <= %s)"):format(
+									cur().value,
+									cur().value,
+									cur().value,
+									cur().value
+								),
+								cur(),
+								"error"
+							)
 						end
 						advance()
 						skip_comments()
