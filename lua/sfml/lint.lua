@@ -172,7 +172,6 @@ local function lint(source)
 
 		local inputted_labels = {} -- [label] = { line=N, types={typename=true} }
 		local forgotten_labels = {}
-		local bare_forget = false
 
 		local events = {}
 		for i, stmt in ipairs(trigger.statements) do
@@ -239,7 +238,6 @@ local function lint(source)
 				end
 			elseif ev.kind == "forget" then
 				if #ev.labels == 0 then
-					bare_forget = true
 					inputted_labels = {}
 					forgotten_labels = {}
 				else
@@ -251,18 +249,16 @@ local function lint(source)
 			end
 		end
 
-		if not bare_forget then
-			for lbl, info in pairs(inputted_labels) do
-				if not forgotten_labels[lbl] then
-					table.insert(diags, {
-						msg = ("Label '%s' was INPUT'd but never FORGET'd — add FORGET to clear the cable buffer"):format(
-							lbl
-						),
-						line = info.line,
-						col = 0,
-						severity = "hint",
-					})
-				end
+		for lbl, info in pairs(inputted_labels) do
+			if not forgotten_labels[lbl] then
+				table.insert(diags, {
+					msg = ("Label '%s' was INPUT'd but never FORGET'd — add FORGET to clear the cable buffer"):format(
+						lbl
+					),
+					line = info.line,
+					col = 0,
+					severity = "hint",
+				})
 			end
 		end
 	end -- for each trigger
