@@ -1224,8 +1224,25 @@ function M.parse(source)
 							return
 						end
 						parse_has_clause(label_tok)
+					else
+						-- label with no HAS: valid for redstone checks, but warn if followed
+						-- by AND/OR/THEN since that almost always means a missing HAS clause
+						local next_t = cur()
+						if
+							next_t
+							and next_t.type == M.TT.IDENT
+							and (next_t.upper == "AND" or next_t.upper == "OR" or next_t.upper == "THEN")
+						then
+							add_error(
+								("Label '%s' has no HAS clause — did you mean '%s HAS ...'?"):format(
+									label_tok.value,
+									label_tok.value
+								),
+								label_tok,
+								"warning"
+							)
+						end
 					end
-					-- label without HAS is also valid (e.g. checking redstone state)
 				end
 
 				-- Parse full boolexpr: atom (AND|OR atom)* THEN
