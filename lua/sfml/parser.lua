@@ -773,6 +773,7 @@ function M.parse(source)
 		end
 
 		if cur() and cur().type == M.TT.IDENT and cur().upper == "ROUND" then
+			local round_tok = cur()
 			advance()
 			skip_comments()
 			if cur() and cur().type == M.TT.IDENT and cur().upper == "ROBIN" then
@@ -784,8 +785,18 @@ function M.parse(source)
 					if cur() and cur().type == M.TT.IDENT then
 						round_robin = cur().upper == "BLOCK" and "BY_BLOCK" or "BY_LABEL"
 						advance()
+					else
+						add_error("Expected 'LABEL' or 'BLOCK' after 'ROUND ROBIN BY'", cur(), "error")
 					end
+				else
+					add_error(
+						"'ROUND ROBIN' requires 'BY LABEL' or 'BY BLOCK' (e.g. ROUND ROBIN BY LABEL)",
+						round_tok,
+						"error"
+					)
 				end
+			else
+				add_error("'ROUND' must be followed by 'ROBIN' (e.g. ROUND ROBIN BY LABEL)", round_tok, "error")
 			end
 		end
 
@@ -907,7 +918,6 @@ function M.parse(source)
 			end
 
 			if cur() and cur().type == M.TT.IDENT and cur().upper == "EACH" then
-				local each_tok = cur()
 				local save = pos
 				advance()
 				skip_comments()
@@ -915,38 +925,6 @@ function M.parse(source)
 					pos = save
 				else
 					stmt.each = true
-					-- EACH should not be followed by a label name — that's invalid syntax
-					-- Valid: EACH SIDE, EACH (alone), but not EACH somelabel
-					local next_t = cur()
-					if
-						next_t
-						and next_t.type == M.TT.IDENT
-						and not LABEL_STOP[next_t.upper]
-						and next_t.upper ~= "ROUND"
-						and next_t.upper ~= "SIDE"
-						and next_t.upper ~= "TOP"
-						and next_t.upper ~= "BOTTOM"
-						and next_t.upper ~= "NORTH"
-						and next_t.upper ~= "EAST"
-						and next_t.upper ~= "SOUTH"
-						and next_t.upper ~= "WEST"
-						and next_t.upper ~= "LEFT"
-						and next_t.upper ~= "RIGHT"
-						and next_t.upper ~= "FRONT"
-						and next_t.upper ~= "BACK"
-						and next_t.upper ~= "NULL"
-						and next_t.upper ~= "SLOT"
-						and next_t.upper ~= "SLOTS"
-					then
-						add_error(
-							("'EACH' cannot be followed by label name '%s' — did you mean '%s ROUND ROBIN BY LABEL'?"):format(
-								next_t.value,
-								next_t.value
-							),
-							each_tok,
-							"error"
-						)
-					end
 				end
 			end
 
