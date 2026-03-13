@@ -89,6 +89,8 @@ highlight default link sfmlSide          Constant
 highlight default link sfmlPunct         Delimiter
 highlight default link sfmlWildcard      Special
 
+" ─── Comment override (must be LAST — later match wins over keywords) ────────
+" contains=NONE prevents any keyword from matching inside a comment line.
 syntax match sfmlLineComment "--.*$" contains=NONE display
 highlight default link sfmlLineComment Comment
 

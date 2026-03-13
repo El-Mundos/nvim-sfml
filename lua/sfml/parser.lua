@@ -477,6 +477,17 @@ function M.parse(source)
 		TICK = true,
 		SECONDS = true,
 		SECOND = true,
+		-- LABEL and BLOCK are round-robin keywords, not valid label names
+		LABEL = true,
+		BLOCK = true,
+		-- IO structural keywords
+		INPUT = true,
+		OUTPUT = true,
+		FROM = true,
+		TO = true,
+		FORGET = true,
+		IF = true,
+		EVERY = true,
 	}
 
 	local function parse_label()
@@ -493,6 +504,16 @@ function M.parse(source)
 		end
 		if t.type == M.TT.IDENT then
 			if LABEL_STOP[t.upper] then
+				-- Special helpful errors for common mistakes
+				if t.upper == "LABEL" then
+					add_error(
+						"'LABEL' is a keyword (used in ROUND ROBIN BY LABEL), not a label name. Did you mean a specific label name?",
+						t,
+						"error"
+					)
+				elseif t.upper == "BLOCK" then
+					add_error("'BLOCK' is a keyword (used in ROUND ROBIN BY BLOCK), not a label name.", t, "error")
+				end
 				return nil
 			end
 			advance()
@@ -980,21 +1001,272 @@ function M.parse(source)
 				end
 				table.insert(forget_points, { labels = forget_labels, stmt_index = #stmts })
 			elseif t.type == M.TT.IDENT and t.upper == "IF" then
+				local if_tok = t
 				advance()
-				local d2 = 0
+
+				-- ── Parse & validate the boolean expression ──────────────────────
+				-- Grammar (simplified):
+				--   boolexpr = boolAtom ((AND|OR) boolAtom)*
+				--   boolAtom = NOT? (TRUE | FALSE | label HAS hasExpr+)
+				--   hasExpr  = setOp? cmpOp? NUMBER resourceId
+				--            | cmpOp NUMBER resourceId
+				-- We validate:
+				--   1. Label names are not reserved keywords (like LABEL, BLOCK, etc.)
+				--   2. HAS must be followed by a comparison operator or quantity, not bare resource
+				--   3. AND/OR must be followed by a complete atom (label HAS ...)
+				--   4. Condition must end with THEN
+
+				-- Keywords that CANNOT be label names in an IF condition
+				local COND_LABEL_STOP = {
+					HAS = true,
+					AND = true,
+					OR = true,
+					NOT = true,
+					THEN = true,
+					END = true,
+					ELSE = true,
+					DO = true,
+					TRUE = true,
+					FALSE = true,
+					OVERALL = true,
+					SOME = true,
+					EVERY = true,
+					ONE = true,
+					LONE = true,
+					INPUT = true,
+					OUTPUT = true,
+					FROM = true,
+					TO = true,
+					FORGET = true,
+					ROUND = true,
+					ROBIN = true,
+					BY = true,
+					LABEL = true,
+					BLOCK = true,
+					SLOT = true,
+					SLOTS = true,
+					EMPTY = true,
+					RETAIN = true,
+					EXCEPT = true,
+					WITH = true,
+					WITHOUT = true,
+					TAG = true,
+				}
+
+				-- Comparison operator tokens
+				local function is_cmp_op()
+					local t2 = cur()
+					if not t2 then
+						return false
+					end
+					if
+						t2.type == M.TT.GT
+						or t2.type == M.TT.LT
+						or t2.type == M.TT.GTE
+						or t2.type == M.TT.LTE
+						or t2.type == M.TT.EQ
+					then
+						return true
+					end
+					if t2.type == M.TT.IDENT then
+						local u2 = t2.upper
+						return u2 == "GT" or u2 == "LT" or u2 == "EQ" or u2 == "LE" or u2 == "GE"
+					end
+					return false
+				end
+
+				local function is_set_op()
+					local t2 = cur()
+					if not t2 or t2.type ~= M.TT.IDENT then
+						return false
+					end
+					local u2 = t2.upper
+					return u2 == "OVERALL"
+						or u2 == "SOME"
+						or u2 == "EVERY"
+						or u2 == "ONE"
+						or u2 == "LONE"
+						or u2 == "EACH"
+				end
+
+				-- Parse one HAS clause: setOp? cmpOp? NUMBER? resourceId
+				-- Returns true if successfully parsed at least something
+				local function parse_has_clause(label_tok)
+					skip_comments()
+					-- optional set op
+					if is_set_op() then
+						advance()
+						skip_comments()
+					end
+
+					-- must have cmp op OR number, not just bare resource name
+					local has_cmp = is_cmp_op()
+					local has_num = cur() and (cur().type == M.TT.NUMBER or cur().type == M.TT.NUMBER_G)
+
+					if not has_cmp and not has_num then
+						-- bare resource without quantity/operator is only valid with 0 implicit
+						-- but the game requires an explicit operator with 0
+						-- peek: is next token a resource-like ident?
+						local t2 = cur()
+						if
+							t2
+							and t2.type == M.TT.IDENT
+							and not COND_LABEL_STOP[t2.upper]
+							and t2.upper ~= "THEN"
+							and t2.upper ~= "AND"
+							and t2.upper ~= "OR"
+						then
+							-- bare resource - this is actually valid (HAS any of this resource)
+							-- don't error, just consume the resource id
+						end
+					end
+
+					if has_cmp then
+						advance()
+						skip_comments()
+					end
+
+					-- optional number
+					if cur() and (cur().type == M.TT.NUMBER or cur().type == M.TT.NUMBER_G) then
+						-- check: if number is 0 without a cmp op, that's the bug from line 30
+						local num_val = tonumber((cur().value:gsub("[gG]$", "")))
+						if num_val == 0 and not has_cmp then
+							add_error("HAS 0 requires a comparison operator (e.g. HAS = 0 or HAS <= 0)", cur(), "error")
+						end
+						advance()
+						skip_comments()
+					end
+
+					-- consume resource id
+					parse_resource_id()
+					return true
+				end
+
+				-- Parse one bool atom: NOT? (TRUE|FALSE | label HAS hasClause+)
+				local function parse_bool_atom()
+					skip_comments()
+					if not cur() or cur().type == M.TT.EOF then
+						return
+					end
+
+					-- NOT
+					if cur().type == M.TT.IDENT and cur().upper == "NOT" then
+						advance()
+						skip_comments()
+					end
+
+					-- TRUE / FALSE
+					if cur() and cur().type == M.TT.IDENT and (cur().upper == "TRUE" or cur().upper == "FALSE") then
+						advance()
+						return
+					end
+
+					-- LPAREN grouping
+					if cur() and cur().type == M.TT.LPAREN then
+						advance()
+						-- recurse: parse until RPAREN
+						while cur() and cur().type ~= M.TT.EOF do
+							local u2 = cur().type == M.TT.IDENT and cur().upper
+							if cur().type == M.TT.RPAREN then
+								advance()
+								break
+							end
+							if u2 == "AND" or u2 == "OR" then
+								advance()
+								skip_comments()
+							else
+								parse_bool_atom()
+							end
+							skip_comments()
+						end
+						return
+					end
+
+					-- label
+					local label_tok = cur()
+					if not label_tok or label_tok.type == M.TT.EOF then
+						return
+					end
+
+					-- Check label is not a reserved keyword that can't be a label
+					if label_tok.type == M.TT.IDENT and COND_LABEL_STOP[label_tok.upper] then
+						add_error(
+							("'%s' is a reserved keyword and cannot be used as a label name"):format(label_tok.value),
+							label_tok,
+							"error"
+						)
+						-- don't advance, let the outer loop handle recovery
+						return
+					end
+
+					-- consume label (string or ident)
+					if label_tok.type == M.TT.STRING or label_tok.type == M.TT.IDENT then
+						advance()
+						all_labels[label_tok.value:lower()] = true
+					end
+					skip_comments()
+
+					-- expect HAS
+					if cur() and cur().type == M.TT.IDENT and cur().upper == "HAS" then
+						advance()
+						skip_comments()
+						-- must be followed by a valid has clause, not AND/OR/THEN
+						local next_t = cur()
+						if not next_t or next_t.type == M.TT.EOF then
+							add_error("Expected condition after HAS", next_t, "error")
+							return
+						end
+						if
+							next_t.type == M.TT.IDENT
+							and (next_t.upper == "AND" or next_t.upper == "OR" or next_t.upper == "THEN")
+						then
+							add_error("Expected quantity or comparison after HAS", next_t, "error")
+							return
+						end
+						parse_has_clause(label_tok)
+					end
+					-- label without HAS is also valid (e.g. checking redstone state)
+				end
+
+				-- Parse full boolexpr: atom (AND|OR atom)* THEN
+				local found_then = false
+				parse_bool_atom()
+				skip_comments()
+
 				while cur() and cur().type ~= M.TT.EOF do
 					local u = cur().type == M.TT.IDENT and cur().upper
-					if cur().type == M.TT.LPAREN then
-						d2 = d2 + 1
-					elseif cur().type == M.TT.RPAREN then
-						d2 = d2 - 1
-					elseif d2 == 0 and u == "THEN" then
+					if u == "THEN" then
 						advance()
+						found_then = true
 						break
+					elseif u == "AND" or u == "OR" then
+						advance()
+						skip_comments()
+						-- next must be a valid atom start, not THEN
+						if cur() and cur().type == M.TT.IDENT and cur().upper == "THEN" then
+							add_error(("'%s' must be followed by a condition, not THEN"):format(u), cur(), "error")
+							advance()
+							found_then = true
+							break
+						end
+						parse_bool_atom()
+						skip_comments()
+					elseif u == "END" or u == "ELSE" or u == "INPUT" or u == "OUTPUT" then
+						-- probably missing THEN
+						add_error("Expected THEN to close IF condition", cur(), "error")
+						found_then = true
+						break
+					else
+						-- skip unknown tokens in condition (recovery)
+						advance()
+						skip_comments()
 					end
-					advance()
-					skip_comments()
 				end
+
+				if not found_then then
+					add_error("Expected THEN to close IF condition", if_tok, "error")
+				end
+				-- ── End boolexpr ─────────────────────────────────────────────────
 
 				local if_block = parse_block_contents(depth + 1)
 				for _, s in ipairs(if_block.statements) do
@@ -1010,19 +1282,24 @@ function M.parse(source)
 					skip_comments()
 					if cur() and cur().type == M.TT.IDENT and cur().upper == "IF" then
 						advance()
-						local d3 = 0
+						skip_comments()
+						-- parse ELSE IF condition the same way
+						parse_bool_atom()
+						skip_comments()
 						while cur() and cur().type ~= M.TT.EOF do
 							local u2 = cur().type == M.TT.IDENT and cur().upper
-							if cur().type == M.TT.LPAREN then
-								d3 = d3 + 1
-							elseif cur().type == M.TT.RPAREN then
-								d3 = d3 - 1
-							elseif d3 == 0 and u2 == "THEN" then
+							if u2 == "THEN" then
 								advance()
 								break
+							elseif u2 == "AND" or u2 == "OR" then
+								advance()
+								skip_comments()
+								parse_bool_atom()
+								skip_comments()
+							else
+								advance()
+								skip_comments()
 							end
-							advance()
-							skip_comments()
 						end
 					end
 					local else_block = parse_block_contents(depth + 1)
