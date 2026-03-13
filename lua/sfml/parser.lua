@@ -1239,7 +1239,7 @@ function M.parse(source)
 									label_tok.value
 								),
 								label_tok,
-								"warning"
+								"error"
 							)
 						end
 					end
