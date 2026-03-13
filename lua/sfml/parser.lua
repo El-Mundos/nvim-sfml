@@ -469,6 +469,7 @@ function M.parse(source)
 		ROBIN = true,
 		BY = true,
 		SIDE = true,
+		EACH = true,
 		END = true,
 		ELSE = true,
 		DO = true,
@@ -513,6 +514,12 @@ function M.parse(source)
 					)
 				elseif t.upper == "BLOCK" then
 					add_error("'BLOCK' is a keyword (used in ROUND ROBIN BY BLOCK), not a label name.", t, "error")
+				elseif t.upper == "BY" then
+					add_error(
+						"'BY' is a keyword. Did you mean 'ROUND ROBIN BY LABEL' or 'ROUND ROBIN BY BLOCK'?",
+						t,
+						"error"
+					)
 				end
 				return nil
 			end
@@ -742,6 +749,29 @@ function M.parse(source)
 		end
 
 		skip_comments()
+		-- Detect common mistake: BY ROUND ROBIN instead of ROUND ROBIN BY LABEL
+		if cur() and cur().type == M.TT.IDENT and cur().upper == "BY" then
+			local by_tok = cur()
+			local save = pos
+			advance()
+			skip_comments()
+			if cur() and cur().type == M.TT.IDENT and cur().upper == "ROUND" then
+				add_error(
+					"Invalid order: use 'ROUND ROBIN BY LABEL' or 'ROUND ROBIN BY BLOCK', not 'BY ROUND ROBIN'",
+					by_tok,
+					"error"
+				)
+				-- consume ROUND ROBIN so parsing can continue
+				advance()
+				skip_comments()
+				if cur() and cur().type == M.TT.IDENT and cur().upper == "ROBIN" then
+					advance()
+				end
+			else
+				pos = save
+			end
+		end
+
 		if cur() and cur().type == M.TT.IDENT and cur().upper == "ROUND" then
 			advance()
 			skip_comments()
@@ -803,10 +833,13 @@ function M.parse(source)
 		-- Slot qualifier
 		skip_comments()
 		if cur() and cur().type == M.TT.IDENT and (cur().upper == "SLOT" or cur().upper == "SLOTS") then
+			local slot_tok = cur()
 			advance()
 			skip_comments()
+			local has_any_number = false
 			repeat
 				if cur() and cur().type == M.TT.NUMBER then
+					has_any_number = true
 					advance()
 				end
 				skip_comments()
@@ -825,6 +858,13 @@ function M.parse(source)
 					break
 				end
 			until false
+			if not has_any_number then
+				add_error(
+					("'%s' requires at least one slot number (e.g. SLOT 0, SLOT 0-5)"):format(slot_tok.value),
+					slot_tok,
+					"error"
+				)
+			end
 		end
 
 		return { labels = labels, round_robin = round_robin }
@@ -867,6 +907,7 @@ function M.parse(source)
 			end
 
 			if cur() and cur().type == M.TT.IDENT and cur().upper == "EACH" then
+				local each_tok = cur()
 				local save = pos
 				advance()
 				skip_comments()
@@ -874,6 +915,38 @@ function M.parse(source)
 					pos = save
 				else
 					stmt.each = true
+					-- EACH should not be followed by a label name — that's invalid syntax
+					-- Valid: EACH SIDE, EACH (alone), but not EACH somelabel
+					local next_t = cur()
+					if
+						next_t
+						and next_t.type == M.TT.IDENT
+						and not LABEL_STOP[next_t.upper]
+						and next_t.upper ~= "ROUND"
+						and next_t.upper ~= "SIDE"
+						and next_t.upper ~= "TOP"
+						and next_t.upper ~= "BOTTOM"
+						and next_t.upper ~= "NORTH"
+						and next_t.upper ~= "EAST"
+						and next_t.upper ~= "SOUTH"
+						and next_t.upper ~= "WEST"
+						and next_t.upper ~= "LEFT"
+						and next_t.upper ~= "RIGHT"
+						and next_t.upper ~= "FRONT"
+						and next_t.upper ~= "BACK"
+						and next_t.upper ~= "NULL"
+						and next_t.upper ~= "SLOT"
+						and next_t.upper ~= "SLOTS"
+					then
+						add_error(
+							("'EACH' cannot be followed by label name '%s' — did you mean '%s ROUND ROBIN BY LABEL'?"):format(
+								next_t.value,
+								next_t.value
+							),
+							each_tok,
+							"error"
+						)
+					end
 				end
 			end
 
